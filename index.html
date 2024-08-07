@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.8.1/pptxgen.min.js"></script>
+  <script src="https://mozilla.github.io/pdf.js/build/pdf.mjs" type="module"></script>
+</head>
+<body>
+<p>Upload File Word (docx) <input type="file" id="upload-docx" accept=".docx"></p>
+<p>Upload File PowerPoint (pptx) <input type="file" id="upload-pptx" accept=".pptx"></p>
+<p>Upload File PDF <input type="file" id="upload-pdf" accept=".pdf"></p>
+<p>
+Estimated learning time: <span id="est-time"></span>
+</p>
+
+<hr/>
+Text content of the file:
+<div id="output" style="padding: 12px; border: 1px solid #eee"></div>
+
+<script>
+  document.getElementById('upload-docx').addEventListener('change', function(event) {
+    var reader = new FileReader();
+    reader.onload = function(event) {
+      var arrayBuffer = reader.result;
+      mammoth.extractRawText({arrayBuffer: arrayBuffer})
+        .then(function(result) {
+          document.getElementById('output').innerText = result.value;
+          document.getElementById('est-time').innerText = timeToHourMinute(calcEstReadTime(result.value));
+        })
+        .catch(function(err) {
+          console.log(err);
+        });
+    };
+    reader.readAsArrayBuffer(event.target.files[0]);
+  });
+
+  document.getElementById('upload-pdf').addEventListener('change', function(event) {  
+    var reader = new FileReader();
+    reader.onload = function(event) {
+      getPDFText(reader.result).then( textOutput => {
+        document.getElementById('output').innerText = textOutput;
+        document.getElementById('est-time').innerText = timeToHourMinute(calcEstReadTime(textOutput));
+      }).catch(function(err) {
+        console.log(err);
+      });
+    }
+    reader.readAsArrayBuffer(event.target.files[0]);
+    
+    var { pdfjsLib } = globalThis;
+    // The workerSrc property shall be specified.
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://mozilla.github.io/pdf.js/build/pdf.worker.mjs';
+    
+    async function getPDFText(arrayBuffer) {
+      const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+      const pdf = await loadingTask.promise;
+
+      const pageTextPromises = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        pageTextPromises.push(getPageText(pdf, i));
+      }
+      const pageTexts = await Promise.all(pageTextPromises);
+      return ( pageTexts.join(" ") );
+    }
+
+    async function getPageText(pdf, pageNo) {
+      const page = await pdf.getPage(pageNo);
+      const tokenizedText = await page.getTextContent();
+      return tokenizedText.items.map(token => token.str).join("");
+    };
+  });
+
+  document.getElementById('upload-pptx').addEventListener('change', function(event) {
+    var reader = new FileReader();
+    reader.onload = function(event) {
+      var arrayBuffer = reader.result;
+      JSZip.loadAsync(arrayBuffer).then(function(zip) {
+        var slidePromises = [];
+        var slideTexts = [];
+
+        // Collect promises for each slide
+        zip.folder("ppt/slides").forEach(function(relativePath, file) {
+          slidePromises.push(
+            file.async("string").then(function(text) {
+              var parser = new DOMParser();
+              var xmlDoc = parser.parseFromString(text, "application/xml");
+              var paragraphs = xmlDoc.getElementsByTagName("a:t");
+              var slideText = "";
+              for (var i = 0; i < paragraphs.length; i++) {
+                slideText += paragraphs[i].textContent + " ";
+              }
+              slideTexts.push(slideText.trim());
+            })
+          );
+        });
+
+        // Once all slides are processed, display the result
+        Promise.all(slidePromises).then(function() {
+          const textOutput = slideTexts.join("\n\n");
+          document.getElementById('output').innerText = textOutput;
+          document.getElementById('est-time').innerText = timeToHourMinute(calcEstReadTime(textOutput));
+        })
+
+      }).catch(function(err) {
+        console.log(err);
+      });
+    };
+    reader.readAsArrayBuffer(event.target.files[0]);
+  });
+
+  function calcEstReadTime ( str ) {
+    const wpm = 100; // 200-250 words per minute average reading, but for new information or facts that needs comprehension it reduces to 100
+    return Math.ceil(str.split(' ').length / wpm);
+  }
+
+  function timeToHourMinute( minute ) {
+    var out = '';
+    if (minute > 60) {
+      var h = parseInt(minute / 60);
+      out = h + 'h ';
+      minute -= h * 60; 
+    }
+    
+    if (minute > 0) {
+      out += minute + 'm';  
+    }
+
+    return out;
+  }
+</script>
+
+</body>
+</html>
